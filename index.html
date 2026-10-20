@@ -1,0 +1,832 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>[hidden]{display:none!important}body{margin:0}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
+<title>Правка PDF</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: sticky tool bar → scrolling column of pages → editing panel docked to the bottom */
+:root{
+  --paper:#e9edf2; --surface:#ffffff; --ink:#18202c; --muted:#5a6575; --line:#d3dae3;
+  --pencil:#2459c4; --pencil-soft:rgba(36,89,196,.12); --mark:#c98a00; --danger:#b3261e;
+  --shadow:0 1px 2px rgba(20,30,50,.08),0 8px 24px rgba(20,30,50,.10);
+  --ui:"Golos Text",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --num:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#13161b; --surface:#1c2027; --ink:#e3e7ed; --muted:#97a1b0; --line:#2d333c;
+  --pencil:#7aa5ff; --pencil-soft:rgba(122,165,255,.16); --mark:#e3ad35; --danger:#ff8a80;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px rgba(0,0,0,.45); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#13161b; --surface:#1c2027; --ink:#e3e7ed; --muted:#97a1b0; --line:#2d333c;
+  --pencil:#7aa5ff; --pencil-soft:rgba(122,165,255,.16); --mark:#e3ad35; --danger:#ff8a80;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px rgba(0,0,0,.45); color-scheme:dark}
+html,body{height:100%}
+body{background:var(--paper);color:var(--ink);font:15px/1.45 var(--ui);display:flex;flex-direction:column}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--pencil);outline-offset:2px}
+
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--line);
+  padding-block:10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
+.brand{display:flex;align-items:baseline;gap:8px;font-weight:600;font-size:17px;letter-spacing:-.01em;margin-right:auto}
+.brand svg{align-self:center}
+.file{display:flex;align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px}
+.file b{font-weight:500;color:var(--ink);max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:4px;background:var(--pencil-soft);color:var(--pencil);font-weight:600}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:500;white-space:nowrap}
+.btn:hover{border-color:var(--pencil)}
+.btn.primary{background:var(--pencil);border-color:var(--pencil);color:var(--surface)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn:disabled{opacity:.45;cursor:default;filter:none}
+.count{font:500 12px var(--num);background:rgba(255,255,255,.22);padding:1px 6px;border-radius:10px}
+.btn:not(.primary) .count{background:var(--pencil-soft)}
+
+.hint{padding-block:10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  color:var(--muted);font-size:13.5px;display:flex;flex-wrap:wrap;gap:6px 18px;justify-content:center;text-align:center}
+.hint strong{color:var(--ink);font-weight:500}
+.status{font-family:var(--num);font-size:12px}
+
+.scroller{flex:1;overflow:auto;padding-block:8px 140px}
+.pages{display:flex;flex-direction:column;align-items:center;gap:22px;width:max-content;min-width:100%;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));box-sizing:border-box}
+.page{position:relative;background:#fff;box-shadow:var(--shadow);flex:none}
+.page canvas{display:block;width:100%;height:100%}
+.pnum{position:absolute;left:0;top:-18px;font:500 11px var(--num);color:var(--muted);letter-spacing:.04em}
+.noText{position:absolute;inset:auto 12px 12px 12px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}
+
+.tb{position:absolute;white-space:pre;color:transparent;caret-color:transparent;cursor:text;transform-origin:0 0;outline:none;
+  border-radius:1px;box-sizing:content-box}
+.tb:hover{box-shadow:0 0 0 1px var(--pencil);background:var(--pencil-soft)}
+.tb.edited{box-shadow:none}
+.tb.edited:hover,.tb.edited.flag{box-shadow:0 0 0 1px var(--mark)}
+.tb.editing{box-shadow:0 0 0 1.5px var(--pencil)!important;z-index:2;min-width:4px}
+/* once the page is redrawn from the real edited PDF, the canvas shows the result; the overlay only keeps the caret */
+.tb.edited.rendered:not(.editing){background:transparent!important;color:transparent!important;caret-color:transparent!important}
+
+.panel{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:6;
+  width:min(760px,calc(100% - 2 * max(16px,env(safe-area-inset-left,0px))));box-sizing:border-box;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:10px 12px;
+  display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.panel label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.panel select,.panel input[type=number]{border:1px solid var(--line);background:var(--paper);border-radius:6px;padding:5px 7px}
+.panel select{max-width:min(46vw,260px)}
+.panel input[type=number]{width:64px;font-family:var(--num);font-size:13px}
+.panel input[type=color]{width:34px;height:30px;border:1px solid var(--line);border-radius:6px;padding:2px;background:var(--paper)}
+.tog{border:1px solid var(--line);background:var(--paper);border-radius:6px;width:32px;height:30px;cursor:pointer}
+.tog[aria-pressed="true"]{background:var(--pencil-soft);border-color:var(--pencil);color:var(--pencil)}
+.fontinfo{flex-basis:100%;font-size:12px;color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.fontinfo b{color:var(--ink);font-weight:500}
+.panel .sp{flex:1}
+.lnk{background:none;border:0;color:var(--muted);cursor:pointer;padding:6px 4px;font-size:13px}
+.lnk:hover{color:var(--danger)}
+
+.drop{position:fixed;inset:0;z-index:20;display:grid;place-items:center;background:rgba(36,89,196,.18);backdrop-filter:blur(2px);pointer-events:none}
+.drop div{background:var(--surface);border:2px dashed var(--pencil);border-radius:14px;padding:28px 36px;font-weight:600;font-size:18px}
+.toast{position:fixed;left:50%;top:calc(70px + env(safe-area-inset-top,0px));transform:translateX(-50%);z-index:21;background:var(--ink);color:var(--surface);
+  padding:9px 16px;border-radius:8px;font-size:14px;max-width:calc(100% - 32px);box-shadow:var(--shadow)}
+.loading{display:flex;justify-content:center;padding:60px 16px;color:var(--muted)}
+@media (max-width:560px){.file b{max-width:16ch}.brand span.sub{display:none}}
+@media (prefers-reduced-motion:no-preference){.btn,.tog{transition:border-color .15s,background .15s}}
+</style>
+
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 2h8l4 4v12H4z" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 14.5l6.5-6.5 1.6 1.6-6.5 6.5H7z" fill="var(--pencil)"/></svg>
+    Правка PDF
+  </div>
+  <div class="file" id="fileBox"><b id="fileName">—</b><span class="tag" id="sampleTag" hidden>Пример</span><span id="pageInfo"></span></div>
+  <button class="btn" id="openBtn" type="button">Открыть PDF</button>
+  <button class="btn" id="undoBtn" type="button" disabled title="Ctrl+Z">Отменить</button>
+  <button class="btn primary" id="saveBtn" type="button" disabled>Сохранить PDF <span class="count" id="editCount">0</span></button>
+  <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
+</header>
+
+<div class="hint" id="hint">
+  <span><strong>Нажмите на любой текст</strong> и печатайте — шрифт, размер и цвет подберутся сами.</span>
+  <span>Enter — готово, Esc — отмена. Файл не покидает ваш браузер.</span>
+  <span class="status" id="status"></span>
+</div>
+
+<main class="scroller" id="scroller"><div class="pages" id="pages"><div class="loading">Загружаю…</div></div></main>
+
+<div class="panel" id="panel" hidden>
+  <label for="fontSel">Шрифт <select id="fontSel"></select></label>
+  <button class="tog" id="boldTog" type="button" aria-pressed="false" title="Жирный"><b>Ж</b></button>
+  <button class="tog" id="italTog" type="button" aria-pressed="false" title="Курсив"><i>К</i></button>
+  <label for="sizeIn">Размер <input type="number" id="sizeIn" min="2" max="300" step="0.5"></label>
+  <label for="colorIn">Цвет <input type="color" id="colorIn"></label>
+  <span class="sp"></span>
+  <button class="lnk" id="revertBtn" type="button">Вернуть оригинал</button>
+  <button class="btn primary" id="doneBtn" type="button">Готово</button>
+  <div class="fontinfo" id="fontInfo"></div>
+</div>
+<div class="drop" id="drop" hidden><div>Отпустите PDF, чтобы открыть</div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://unpkg.com/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const pdfjs = window.pdfjsLib;
+pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+/* ---------- Replacement fonts (metric-compatible, with Cyrillic) ---------- */
+const FAMILIES = {
+  sans:   {label:"Liberation Sans (как Arial)",            files:["LiberationSans-Regular","LiberationSans-Bold","LiberationSans-Italic","LiberationSans-BoldItalic"]},
+  serif:  {label:"Liberation Serif (как Times New Roman)", files:["LiberationSerif-Regular","LiberationSerif-Bold","LiberationSerif-Italic","LiberationSerif-BoldItalic"]},
+  mono:   {label:"Liberation Mono (как Courier New)",      files:["LiberationMono-Regular","LiberationMono-Bold","LiberationMono-Italic","LiberationMono-BoldItalic"]},
+  carlito:{label:"Carlito (как Calibri)",                  files:["Carlito-Regular","Carlito-Bold","Carlito-Italic","Carlito-BoldItalic"]},
+  caladea:{label:"Caladea (как Cambria)",                  files:["Caladea-Regular","Caladea-Bold","Caladea-Italic","Caladea-BoldItalic"]},
+};
+const styleIdx = (b,i) => (b?1:0) + (i?2:0);
+const fbCache = new Map(); // file -> Promise<{bytes, fk, css}>
+function loadFallback(file){
+  if(!fbCache.has(file)){
+    fbCache.set(file,(async()=>{
+      const res = await fetch("fonts/"+file+".ttf");
+      if(!res.ok) throw new Error("font "+file);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const fk = cmapOf(bytes);
+      const css = "PE-"+file;
+      try{ const ff = new FontFace(css, bytes.slice().buffer); await ff.load(); document.fonts.add(ff);}catch(e){}
+      return {bytes, fk, css};
+    })());
+    fbCache.get(file).catch(()=>fbCache.delete(file));
+  }
+  return fbCache.get(file);
+}
+// Reads which characters a font file contains straight from its cmap table — the same data the
+// browser uses to pick a font per letter, so the screen and the saved file always agree.
+function cmapOf(bytes){
+  const set=new Set();
+  try{
+    const dv=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+    const n=dv.getUint16(4); let cmap=-1;
+    for(let i=0;i<n;i++){ const o=12+i*16; if(String.fromCharCode(bytes[o],bytes[o+1],bytes[o+2],bytes[o+3])==="cmap") cmap=dv.getUint32(o+8); }
+    if(cmap<0) return set;
+    const nt=dv.getUint16(cmap+2);
+    for(let i=0;i<nt;i++){
+      const pid=dv.getUint16(cmap+4+i*8), eid=dv.getUint16(cmap+6+i*8);
+      if(!(pid===0 || (pid===3 && (eid===1||eid===10)))) continue;
+      const off=cmap+dv.getUint32(cmap+8+i*8); const fmt=dv.getUint16(off);
+      if(fmt===4){
+        const segX2=dv.getUint16(off+6), ends=off+14, starts=ends+segX2+2, deltas=starts+segX2, ros=deltas+segX2;
+        for(let sI=0;sI<segX2/2;sI++){
+          const e=dv.getUint16(ends+sI*2), st=dv.getUint16(starts+sI*2), dl=dv.getInt16(deltas+sI*2), ro=dv.getUint16(ros+sI*2);
+          for(let c=st;c<=e && c!==0xFFFF;c++){
+            let g; if(ro===0) g=(c+dl)&0xFFFF; else { g=dv.getUint16(ros+sI*2+ro+(c-st)*2); if(g) g=(g+dl)&0xFFFF; }
+            if(g) set.add(c);
+          }
+        }
+      }else if(fmt===12){
+        const ng=dv.getUint32(off+12);
+        for(let k=0;k<ng;k++){ const b=off+16+k*12, s0=dv.getUint32(b), e0=dv.getUint32(b+4), g0=dv.getUint32(b+8);
+          for(let c=s0;c<=e0 && c-s0<70000;c++) if(g0+c-s0) set.add(c); }
+      }
+    }
+  }catch(e){}
+  return set;
+}
+function covers(cov, text){
+  if(!cov) return false;
+  for(const ch of text){ const cp=ch.codePointAt(0); if(cp===10||cp===13) continue; if(!cov.has(cp)) return false; }
+  return true;
+}
+
+/* ---------- Analyse the original PDF font ---------- */
+function cleanName(n){ return (n||"").replace(/^[A-Z]{6}\+/,""); }
+function classify(info){
+  const n = cleanName(info.name).toLowerCase().replace(/[\s_,-]/g,"");
+  const bold = /bold|black|heavy|semibold|demi|extrab|ultrab/.test(n) || !!info.bold || !!info.black;
+  const italic = /italic|oblique|kursiv|slanted/.test(n) || !!info.italic;
+  let fam;
+  if(/courier|mono|consol|menlo|lucidaconsole|typewriter/.test(n) || info.isMonospace) fam="mono";
+  else if(/calibri|carlito/.test(n)) fam="carlito";
+  else if(/cambria|caladea/.test(n)) fam="caladea";
+  else if(/times|georgia|garamond|roman|minion|palatino|bookantiqua|bookman|century|charter|baskerville|serif|caslon|cormorant|lora|merriweather|ptserif|liberationserif|tinos|didot|bodoni/.test(n) && !/sansserif/.test(n)) fam="serif";
+  else if(/arial|helvetica|verdana|tahoma|segoe|sans|roboto|opensans|inter|myriad|frutiger|futura|gill|trebuchet|lato|montserrat|liberationsans|arimo|ptsans|franklin/.test(n)) fam="sans";
+  else fam = (info.isSerifFont || info.cssFamily==="serif") ? "serif" : "sans";
+  return {fam, bold, italic};
+}
+
+/* ---------- State ---------- */
+const S = { bytes:null, name:"", sample:false, pdf:null, pages:[], fonts:new Map(), blocks:[], undo:[], editing:null, loadId:0 };
+let downloads = null;
+if(window.claude && window.claude.use){ window.claude.use("downloads").then(d=>{downloads=d;}).catch(()=>{}); }
+
+function toast(msg, ms=3200){
+  const t=$("toast"); t.textContent=msg; t.hidden=false;
+  clearTimeout(toast._t); toast._t=setTimeout(()=>{t.hidden=true;},ms);
+}
+function setStatus(s){ $("status").textContent=s||""; }
+function updateCounts(){
+  const n = S.blocks.filter(b=>b.edit).length;
+  $("editCount").textContent=n;
+  $("saveBtn").disabled = !S.bytes;
+  $("undoBtn").disabled = S.undo.length===0;
+}
+
+/* ---------- Open & render ---------- */
+async function openPdf(bytes, name, sample=false){
+  const myId = ++S.loadId;
+  finishEdit(false);
+  S.bytes = bytes; S.name = name; S.sample = sample; S.pages=[]; S.blocks=[]; S.undo=[]; S.fonts=new Map();
+  $("fileName").textContent = name; $("sampleTag").hidden = !sample;
+  const host = $("pages"); host.innerHTML='<div class="loading">Открываю…</div>';
+  updateCounts();
+  if(S.pdf){ try{ S.pdf.destroy(); }catch(e){} }
+  let pdf;
+  try{
+    pdf = await pdfjs.getDocument({data:bytes.slice(), fontExtraProperties:true, isEvalSupported:false}).promise;
+  }catch(e){
+    host.innerHTML='<div class="loading">Не удалось открыть файл. Если PDF защищён паролем, снимите защиту и попробуйте снова.</div>';
+    return;
+  }
+  if(myId!==S.loadId) return;
+  S.pdf = pdf;
+  $("pageInfo").textContent = pdf.numPages + " " + plural(pdf.numPages,"страница","страницы","страниц");
+  host.innerHTML="";
+  const avail = Math.max(280, $("scroller").clientWidth - 40);
+  for(let i=1;i<=pdf.numPages;i++){
+    if(myId!==S.loadId) return;
+    setStatus("Страница "+i+" из "+pdf.numPages+"…");
+    await renderPage(pdf, i, avail, host);
+  }
+  setStatus("");
+}
+function plural(n,a,b,c){ const m=n%10, h=n%100; return (m===1&&h!==11)?a:(m>=2&&m<=4&&(h<12||h>14))?b:c; }
+
+async function renderPage(pdf, num, avail, host){
+  const page = await pdf.getPage(num);
+  const base = page.getViewport({scale:1});
+  const scale = Math.min(1.75, Math.max(0.4, avail/base.width));
+  const vp = page.getViewport({scale});
+  const dpr = Math.min(2.5, window.devicePixelRatio||1);
+  const wrap = document.createElement("div"); wrap.className="page";
+  wrap.style.width = vp.width+"px"; wrap.style.height = vp.height+"px";
+  const cv = document.createElement("canvas");
+  cv.width = Math.floor(vp.width*dpr); cv.height = Math.floor(vp.height*dpr);
+  const pn = document.createElement("div"); pn.className="pnum"; pn.textContent = "СТР. "+num;
+  wrap.append(cv, pn); host.append(wrap);
+  const ctx = cv.getContext("2d", {willReadFrequently:true});
+  await page.render({canvasContext:ctx, viewport:vp, transform: dpr!==1?[dpr,0,0,dpr,0,0]:null}).promise;
+  const tc = await page.getTextContent();
+  // keep an untouched copy of the original pixels for colour and baseline detection
+  const oc = document.createElement("canvas"); oc.width=cv.width; oc.height=cv.height;
+  const sctx = oc.getContext("2d", {willReadFrequently:true}); sctx.drawImage(cv,0,0);
+  const pg = {num, page, vp, dpr, ctx, sctx, wrap, blocks:[], dirty:false};
+  S.pages.push(pg);
+  // Register every font pdf.js loaded for this page, not only those named in the text items:
+  // one line often mixes several embedded pieces of the same font (e.g. Polish letters in a second subset).
+  const regFont = (fname, st) => {
+    if(S.fonts.has(fname)) return;
+    let f=null; try{ if(!page.commonObjs.has || page.commonObjs.has(fname)) f = page.commonObjs.get(fname); }catch(e){ f=null; }
+    if(!f && !st) return;
+    st = st || {};
+    const info = {loadedName:fname, name:f&&f.name||"", data:f&&f.data||null, bold:f&&f.bold, black:f&&f.black, italic:f&&f.italic,
+      isMonospace:f&&f.isMonospace, isSerifFont:f&&f.isSerifFont, cssFamily:st.fontFamily, fk:undefined};
+    info.cls = classify(info);
+    S.fonts.set(fname, info);
+  };
+  for(const fname of Object.keys(tc.styles)) regFont(fname, tc.styles[fname]);
+  const pre = (Object.keys(tc.styles)[0]||"").match(/^(.*_f)\d+$/);
+  if(pre){ let miss=0; for(let i=1;i<600 && miss<40;i++){ const id=pre[1]+i; const had=S.fonts.has(id); regFont(id,null); if(S.fonts.has(id)){ miss=0; } else miss++; if(had) miss=0; } }
+  const blocks = mergeItems(tc.items, tc.styles);
+  for(const b of blocks){ b.pg = pg; layoutBlock(b); pg.blocks.push(b); S.blocks.push(b); }
+  if(blocks.length===0){
+    const n=document.createElement("div"); n.className="noText";
+    n.textContent="На этой странице нет распознаваемого текста (скорее всего, это скан или картинка) — её не получится править.";
+    wrap.append(n);
+  }
+}
+
+function mergeItems(items, styles){
+  const out=[]; let cur=null;
+  for(const it of items){
+    if(typeof it.str!=="string") continue;
+    const t = it.transform;
+    const size = Math.hypot(t[2],t[3]) || Math.hypot(t[0],t[1]);
+    if(!size) continue;
+    const flat = Math.abs(t[1])<1e-6 && Math.abs(t[2])<1e-6 && t[0]>0 && t[3]>0;
+    if(!it.str.length){ if(it.hasEOL && cur){ out.push(cur); cur=null; } continue; }
+    // a wide gap (several spaces, a table column) splits the line into separate pieces
+    if(!it.str.trim() && it.width > 0.45*size){ if(cur){ out.push(cur); cur=null; } continue; }
+    if(cur && flat && cur.flat && it.fontName===cur.fontName && Math.abs(size-cur.size)<0.05*size && Math.abs(t[5]-cur.t[5])<0.015*size){
+      const endX = cur.t[4]+cur.width; const gap = t[4]-endX;
+      if(gap > -0.25*size && gap < 0.35*size){
+        let add = it.str;
+        if(gap > 0.18*size && !/\s$/.test(cur.str) && !/^\s/.test(add)) add = " "+add;
+        cur.str += add; cur.width = Math.max(cur.width, t[4]+it.width - cur.t[4]);
+        if(it.hasEOL){ out.push(cur); cur=null; }
+        continue;
+      }
+    }
+    if(cur) out.push(cur);
+    cur = {str:it.str, t:t.slice(), width:it.width, fontName:it.fontName, size, flat, hx:Math.hypot(t[0],t[1])/size};
+    if(it.hasEOL){ out.push(cur); cur=null; }
+  }
+  if(cur) out.push(cur);
+  return out.filter(b=>b.str.trim().length>0).map(b=>{
+    const st = styles[b.fontName]||{};
+    let asc = typeof st.ascent==="number" && st.ascent>0.3 && st.ascent<1.3 ? st.ascent : 0.8;
+    let desc = typeof st.descent==="number" && st.descent<0 && st.descent>-0.6 ? st.descent : -0.22;
+    b.str = b.str.replace(/\s+$/,"");
+    return Object.assign(b,{orig:b.str, asc, desc, angle:Math.atan2(b.t[1],b.t[0]), edit:null, el:null, dy:0, dyDone:false});
+  });
+}
+
+function layoutBlock(b){
+  const vp = b.pg.vp;
+  const tx = pdfjs.Util.transform(vp.transform, b.t);
+  const angle = Math.atan2(tx[1], tx[0]);
+  const fh = Math.hypot(tx[2], tx[3]);
+  const asc = fh*b.asc;
+  const left = tx[4] + asc*Math.sin(angle), top = tx[5] - asc*Math.cos(angle);
+  const el = document.createElement("div");
+  el.className="tb"; el.textContent = b.orig; el.spellcheck=false;
+  try{ el.contentEditable="plaintext-only"; if(el.contentEditable!=="plaintext-only") el.contentEditable="true"; }catch(e){ el.contentEditable="true"; }
+  const h = fh*(b.asc - b.desc);
+  Object.assign(el.style,{left:left+"px", top:top+"px", minWidth:(b.width*vp.scale)+"px", height:h+"px", lineHeight:h+"px", fontSize:fh+"px",
+    transform: Math.abs(angle)>1e-4 ? "rotate("+angle+"rad)" : ""});
+  el.dataset.w = b.width*vp.scale;
+  b.fh = fh; b.el = el; b.left0 = left; b.top0 = top; b.av = angle;
+  setBlockFont(b, null);
+  el.addEventListener("focus", ()=>startEdit(b));
+  el.addEventListener("keydown", ev=>{
+    if(ev.key==="Enter"){ ev.preventDefault(); finishEdit(true); }
+    else if(ev.key==="Escape"){ ev.preventDefault(); finishEdit(false); }
+  });
+  el.addEventListener("input", ()=>{ if(S.editing && S.editing.b===b) refreshAuto(); });
+  el.addEventListener("paste", ev=>{
+    ev.preventDefault();
+    const txt=(ev.clipboardData&&ev.clipboardData.getData("text/plain")||"").replace(/[\r\n\t]+/g," ");
+    document.execCommand("insertText", false, txt);
+  });
+  b.pg.wrap.append(el);
+  alignBaseline(b);
+}
+
+/* Put the HTML text baseline exactly on the PDF baseline.
+   Different fonts place the baseline differently inside a line box, so measure it. */
+function alignBaseline(b){
+  const el=b.el; if(!el || !el.parentNode) return;
+  const probe = el.cloneNode(false);
+  probe.removeAttribute("contenteditable");
+  probe.style.visibility="hidden"; probe.style.transform="none"; probe.style.left="0"; probe.style.top="0";
+  probe.textContent="Ag";
+  const mark=document.createElement("span");
+  mark.style.cssText="display:inline-block;width:0;height:0;vertical-align:baseline";
+  probe.append(mark);
+  el.parentNode.append(probe);
+  const measured = mark.offsetTop;
+  probe.remove();
+  const desired = b.fh*b.asc + (b.dy||0); // baseline distance from the box top (corrected by the ink on the page)
+  const delta = desired - measured;
+  el.style.left = (b.left0 - delta*Math.sin(b.av))+"px";
+  el.style.top  = (b.top0  + delta*Math.cos(b.av))+"px";
+}
+function alignSoon(b){
+  alignBaseline(b);
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(()=>alignBaseline(b));
+}
+
+/* ---------- Auto-detection of colour & background ---------- */
+function blockQuadPx(b){
+  const u=[Math.cos(b.angle),Math.sin(b.angle)], v=[-u[1],u[0]];
+  const s=b.size, x=b.t[4], y=b.t[5], w=b.width;
+  const pts=[[0,b.desc*s],[w,b.desc*s],[w,b.asc*s],[0,b.asc*s]].map(([a,c])=>b.pg.vp.convertToViewportPoint(x+u[0]*a+v[0]*c, y+u[1]*a+v[1]*c));
+  return pts;
+}
+function sampleColors(b){
+  const pg=b.pg, k=pg.dpr, cv=pg.sctx.canvas;
+  const q=blockQuadPx(b);
+  const xs=q.map(p=>p[0]*k), ys=q.map(p=>p[1]*k);
+  const pad=Math.max(2, Math.round(1.5*k));
+  const x0=Math.max(0,Math.floor(Math.min(...xs))-pad), y0=Math.max(0,Math.floor(Math.min(...ys))-pad);
+  const x1=Math.min(cv.width,Math.ceil(Math.max(...xs))+pad), y1=Math.min(cv.height,Math.ceil(Math.max(...ys))+pad);
+  const w=x1-x0, h=y1-y0;
+  if(w<2||h<2) return {fg:[0,0,0], bg:[1,1,1]};
+  const d=pg.sctx.getImageData(x0,y0,w,h).data;
+  const hist=new Map();
+  const ring=Math.max(1,Math.round(k));
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    if(x>=ring && y>=ring && x<w-ring && y<h-ring) continue;
+    const i=(y*w+x)*4; if(d[i+3]<10) continue;
+    const key=(d[i]>>3)<<10|(d[i+1]>>3)<<5|(d[i+2]>>3);
+    const e=hist.get(key)||[0,0,0,0]; e[0]++; e[1]+=d[i]; e[2]+=d[i+1]; e[3]+=d[i+2]; hist.set(key,e);
+  }
+  let best=null; for(const e of hist.values()) if(!best||e[0]>best[0]) best=e;
+  const bg = best ? [best[1]/best[0],best[2]/best[0],best[3]/best[0]] : [255,255,255];
+  let maxd=0;
+  const dist=(i)=>Math.abs(d[i]-bg[0])+Math.abs(d[i+1]-bg[1])+Math.abs(d[i+2]-bg[2]);
+  for(let i=0;i<d.length;i+=4){ const v=dist(i); if(v>maxd) maxd=v; }
+  let fg;
+  if(maxd<45){ const lum=(bg[0]*.3+bg[1]*.59+bg[2]*.11); fg = lum>128?[0,0,0]:[255,255,255]; }
+  else{
+    let n=0,r=0,g=0,bl=0;
+    for(let i=0;i<d.length;i+=4){ if(dist(i)>=0.85*maxd){ n++; r+=d[i]; g+=d[i+1]; bl+=d[i+2]; } }
+    fg=[r/n,g/n,bl/n];
+  }
+  return {fg:fg.map(c=>c/255), bg:bg.map(c=>c/255)};
+}
+const toHex = c => "#"+c.map(x=>Math.round(Math.max(0,Math.min(1,x))*255).toString(16).padStart(2,"0")).join("");
+const fromHex = h => [1,3,5].map(i=>parseInt(h.substr(i,2),16)/255);
+const cssRgb = c => "rgb("+c.map(x=>Math.round(x*255)).join(",")+")";
+
+
+/* Where the letters really sit. Some PDFs store a baseline that differs from where the glyphs
+   are drawn; find the real one from the rendered page (most glyph bottoms sit on the baseline). */
+function detectInkShift(b){
+  try{
+    const pg=b.pg;
+    if(Math.abs(b.angle)>1e-3 || (pg.vp.rotation%360)!==0) return 0;
+    const k=pg.dpr, cv=pg.sctx.canvas;
+    const base = (b.top0 + b.fh*b.asc)*k;         // expected baseline, device px
+    const fhk = b.fh*k;
+    const x0=Math.max(0,Math.floor(b.left0*k)), x1=Math.min(cv.width,Math.ceil((b.left0+b.width*pg.vp.scale)*k));
+    const y0=Math.max(0,Math.floor(base-0.9*fhk)), y1=Math.min(cv.height,Math.ceil(base+0.5*fhk));
+    const w=x1-x0, h=y1-y0; if(w<3||h<3) return 0;
+    const d=pg.sctx.getImageData(x0,y0,w,h).data;
+    const {bg}=sampleColors(b); const B=bg.map(c=>c*255);
+    const dist=i=>Math.abs(d[i]-B[0])+Math.abs(d[i+1]-B[1])+Math.abs(d[i+2]-B[2]);
+    let maxd=0; for(let i=0;i<d.length;i+=4){ const v=dist(i); if(v>maxd) maxd=v; }
+    if(maxd<60) return 0;
+    const hist=new Map(); let cols=0;
+    for(let x=0;x<w;x++){
+      let bottom=-1;
+      for(let y=h-1;y>=0;y--){ if(dist((y*w+x)*4)>0.5*maxd){ bottom=y; break; } }
+      if(bottom<0) continue;
+      cols++; const key=bottom; hist.set(key,(hist.get(key)||0)+1);
+    }
+    if(cols<4) return 0;
+    let mode=-1,best=0; for(const [y,n] of hist) if(n>best||(n===best&&y>mode)){best=n;mode=y;}
+    if(best<Math.max(3,cols*0.2)) return 0;
+    const ink = y0+mode+1;                         // bottom edge of the most common bottom row
+    const diff = (ink-base)/k;                     // css px, + means the letters sit lower
+    if(Math.abs(diff)<0.6 || Math.abs(diff)>0.45*b.fh) return 0;
+    return diff;
+  }catch(e){ return 0; }
+}
+
+/* ---------- Font resolution ---------- */
+function origFk(info){
+  if(info.fk!==undefined) return info.fk;
+  info.fk=null;
+  if(info.data && info.data.length && !info.embedBad){ const c=cmapOf(info.data); if(c.size) info.fk=c; }
+  return info.fk;
+}
+// Original fonts usable for a block: its own font plus every other embedded piece with the same name.
+function origSet(b){
+  const main = S.fonts.get(b.fontName);
+  const out = [];
+  if(main && origFk(main)) out.push(main);
+  const nm = main && cleanName(main.name);
+  if(nm) for(const f of S.fonts.values()) if(f!==main && cleanName(f.name)===nm && origFk(f)) out.push(f);
+  return out;
+}
+const charOk = (fk, ch) => covers(fk, ch);
+// Splits text into runs; each letter keeps an original font when the file has it, otherwise a matching replacement.
+async function resolveFont(b, cfg, text){
+  const info = S.fonts.get(b.fontName) || {cls:{fam:"sans",bold:false,italic:false}};
+  const styleChanged = cfg.bold!==info.cls.bold || cfg.italic!==info.cls.italic;
+  const useOrig = (cfg.mode==="auto" && !styleChanged) || cfg.mode==="orig";
+  const origs = useOrig ? origSet(b) : [];
+  let fams = useOrig ? [info.cls.fam] : [cfg.mode];
+  for(const f of [info.cls.fam==="caladea"?"serif":info.cls.fam, "sans"]) if(!fams.includes(f)) fams.push(f);
+  const fbs = [];
+  for(const fam of fams){
+    const file = FAMILIES[fam].files[styleIdx(cfg.bold,cfg.italic)];
+    try{ const f = await loadFallback(file); fbs.push({key:"f:"+file, kind:"fb", file, fam, css:f.css, fk:f.fk}); }catch(e){}
+  }
+  const cands = origs.map(o=>({key:"o:"+o.loadedName, kind:"orig", name:o.loadedName, css:o.loadedName, fk:o.fk})).concat(fbs);
+  const runs=[]; const missing=new Set(); const used=new Map();
+  for(const ch of text){
+    let c = cands.find(c=>charOk(c.fk, ch));
+    if(!c){ c = cands[0]; }
+    if(!c) return {kind:"none", runs:[]};
+    if(c.kind==="fb" && origs.length && ch.trim()) missing.add(ch);
+    used.set(c.key, c);
+    const last = runs[runs.length-1];
+    if(last && last.c===c) last.text+=ch; else runs.push({c, text:ch});
+  }
+  const kinds = new Set([...used.values()].map(c=>c.kind));
+  return {kind: kinds.size>1 ? "mixed" : (kinds.has("orig") ? "orig" : "fb"), runs, cands, missing, fbs, origs};
+}
+function genericOf(b){
+  const info = S.fonts.get(b.fontName);
+  return info && info.cls.fam==="mono" ? "monospace" : info && (info.cls.fam==="serif"||info.cls.fam==="caladea") ? "serif" : "sans-serif";
+}
+function setBlockFont(b, res){
+  // The browser picks a font per letter from this list in the same order as resolveFont does.
+  let fams;
+  if(!res || !res.cands){
+    const names=[b.fontName]; const main=S.fonts.get(b.fontName); const nm=main&&cleanName(main.name);
+    if(nm) for(const f of S.fonts.values()) if(f!==main && cleanName(f.name)===nm) names.push(f.loadedName);
+    fams = names;
+  } else fams = res.cands.map(c=>c.css);
+  b.el.style.fontFamily = fams.map(f=>'"'+f+'"').join(", ")+", "+genericOf(b);
+  b.el.style.fontWeight=""; b.el.style.fontStyle="";
+  alignSoon(b);
+}
+function fbName(file){ return file.replace(/-/," ").replace(/([a-z])([A-Z])/g,"$1 $2"); }
+function fontLabel(b, res){
+  const info=S.fonts.get(b.fontName); const orig = cleanName(info&&info.name)||"встроенный шрифт";
+  if(!res || res.kind==="none") return "Не удалось подобрать шрифт.";
+  if(res.kind==="orig") return 'Шрифт: <b>оригинальный из файла</b> ('+esc(orig)+').';
+  const fbUsed = [...new Set(res.runs.filter(r=>r.c.kind==="fb").map(r=>fbName(r.c.file)))].join(", ");
+  if(res.kind==="mixed"){
+    const list=[...res.missing].slice(0,12).join(" ");
+    return 'Шрифт: <b>оригинальный</b> ('+esc(orig)+'). Букв «'+esc(list)+'» в файле нет, только они взяты из <b>'+esc(fbUsed)+'</b> с теми же размерами.';
+  }
+  const why = !res.origs || !res.origs.length ? (info&&info.data ? "выбран вручную или изменено начертание" : "оригинальный шрифт не встроен в файл") : "в оригинальном шрифте нет нужных букв";
+  return 'Оригинал: '+esc(orig)+' → замена <b>'+esc(fbUsed)+'</b> с теми же размерами букв ('+why+').';
+}
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---------- Editing ---------- */
+function startEdit(b){
+  if(S.editing && S.editing.b===b) return;
+  finishEdit(true);
+  const info = S.fonts.get(b.fontName) || {cls:{fam:"sans",bold:false,italic:false}};
+  let cfg;
+  if(b.edit) cfg = Object.assign({}, b.edit);
+  else{
+    const c = sampleColors(b);
+    cfg = {mode:"auto", bold:info.cls.bold, italic:info.cls.italic, size:+b.size.toFixed(2), color:c.fg, bg:c.bg, text:b.orig};
+  }
+  if(!b.dyDone){ b.dyDone=true; b.dy = detectInkShift(b); }
+  S.editing = {b, cfg, before: b.edit ? Object.assign({},b.edit) : null, res:null, seq:0};
+  b.el.classList.add("editing");
+  applyLook(b, cfg);
+  fillPanel(b, cfg, info);
+  $("panel").hidden=false;
+  refreshAuto();
+}
+function applyLook(b, cfg){
+  b.el.style.background = cssRgb(cfg.bg);
+  b.el.style.color = cssRgb(cfg.color);
+  b.el.style.caretColor = cssRgb(cfg.color);
+  const fh = b.fh * (cfg.size / b.size);
+  b.el.style.fontSize = fh+"px";
+  const padPx = Math.max(1, 0.06*b.fh);
+  b.el.style.padding = "0 "+padPx+"px"; b.el.style.marginLeft = (-padPx)+"px";
+  alignBaseline(b);
+}
+function clearLook(b){
+  for(const p of ["background","color","caretColor","padding","marginLeft"]) b.el.style[p]="";
+  b.el.style.fontSize = b.fh+"px";
+  alignBaseline(b);
+}
+function fillPanel(b, cfg, info){
+  const sel=$("fontSel"); sel.innerHTML="";
+  const orig = cleanName(info.name) || "встроенный";
+  const opts=[["auto","Авто"],["orig","Оригинальный: "+orig]];
+  for(const [k,f] of Object.entries(FAMILIES)) opts.push([k,f.label]);
+  for(const [v,l] of opts){ const o=document.createElement("option"); o.value=v; o.textContent=l; sel.append(o); }
+  if(!(info.data)) sel.options[1].disabled=true;
+  sel.value=cfg.mode;
+  $("boldTog").setAttribute("aria-pressed", cfg.bold?"true":"false");
+  $("italTog").setAttribute("aria-pressed", cfg.italic?"true":"false");
+  $("sizeIn").value = +cfg.size.toFixed(1);
+  $("colorIn").value = toHex(cfg.color);
+  $("revertBtn").hidden = !b.edit;
+}
+async function refreshAuto(){
+  const E=S.editing; if(!E) return;
+  const seq=++E.seq;
+  const text = E.b.el.textContent;
+  const res = await resolveFont(E.b, E.cfg, text);
+  if(S.editing!==E || seq!==E.seq) return;
+  E.res=res; setBlockFont(E.b,res);
+  $("fontInfo").innerHTML = fontLabel(E.b,res);
+}
+async function finishEdit(commit){
+  const E=S.editing; if(!E) return;
+  S.editing=null;
+  const b=E.b;
+  b.el.classList.remove("editing");
+  $("panel").hidden=true;
+  const text = b.el.textContent.replace(/[\r\n\t]+/g," ");
+  if(commit){
+    const cfg=Object.assign({},E.cfg,{text});
+    const untouched = !E.before && text===b.orig && cfg.mode==="auto" && cfg.size===+b.size.toFixed(2)
+      && cfg.bold===(S.fonts.get(b.fontName)||{cls:{}}).cls.bold && cfg.italic===(S.fonts.get(b.fontName)||{cls:{}}).cls.italic && !E.colorTouched;
+    if(untouched){ restoreView(b); }
+    else if(E.before && sameCfg(E.before,cfg)){ restoreView(b); }
+    else{ S.undo.push({b, prev:E.before}); b.edit=cfg; restoreView(b); }
+  }else restoreView(b);
+  if(document.activeElement===b.el) b.el.blur();
+  updateCounts();
+}
+function sameCfg(a,c){ return a.text===c.text&&a.mode===c.mode&&a.bold===c.bold&&a.italic===c.italic&&a.size===c.size&&toHex(a.color)===toHex(c.color); }
+async function restoreView(b){
+  b.el.classList.remove("rendered");
+  markDirty(b.pg);
+  if(b.edit){
+    b.el.textContent=b.edit.text; b.el.classList.add("edited"); applyLook(b,b.edit);
+    const res = await resolveFont(b,b.edit,b.edit.text); if(b.edit) setBlockFont(b,res);
+  }else{
+    b.el.textContent=b.orig; b.el.classList.remove("edited"); clearLook(b); setBlockFont(b,null);
+  }
+}
+/* ---------- Live preview: redraw edited pages from the real output PDF ---------- */
+let rrTimer=null;
+function markDirty(pg){ if(!pg) return; const any=pg.blocks.some(x=>x.edit); if(!any && !pg.hadEdits) return; pg.hadEdits=any||pg.hadEdits; pg.dirty=true; clearTimeout(rrTimer); rrTimer=setTimeout(rerender,150); }
+async function rerender(){
+  if(S.rendering){ S.again=true; return; }
+  const pages=S.pages.filter(p=>p.dirty); if(!pages.length) return;
+  S.rendering=true; S.again=false; const loadId=S.loadId;
+  pages.forEach(p=>p.dirty=false);
+  let doc=null;
+  try{
+    const bytes = await buildPdf();
+    if(loadId!==S.loadId) return;
+    doc = await pdfjs.getDocument({data:bytes, isEvalSupported:false}).promise;
+    for(const p of pages){
+      if(p.dirty) continue;
+      const page = await doc.getPage(p.num);
+      const vp = page.getViewport({scale:p.vp.scale});
+      const off = document.createElement("canvas"); off.width=p.ctx.canvas.width; off.height=p.ctx.canvas.height;
+      await page.render({canvasContext:off.getContext("2d"), viewport:vp, transform:p.dpr!==1?[p.dpr,0,0,p.dpr,0,0]:null}).promise;
+      if(loadId!==S.loadId) return;
+      if(p.dirty) continue;
+      p.ctx.clearRect(0,0,off.width,off.height); p.ctx.drawImage(off,0,0);
+      for(const b of p.blocks){ if(b.edit) b.el.classList.add("rendered"); else b.el.classList.remove("rendered"); }
+    }
+  }catch(e){ console.error(e); }
+  finally{
+    if(doc){ try{ doc.destroy(); }catch(e){} }
+    S.rendering=false;
+    if(S.again || S.pages.some(p=>p.dirty)) rerender();
+  }
+}
+function undo(){
+  finishEdit(true);
+  const u=S.undo.pop(); if(!u) return;
+  u.b.edit=u.prev; restoreView(u.b); updateCounts();
+  u.b.el.scrollIntoView({block:"center",behavior:"smooth"});
+}
+
+/* panel controls */
+$("panel").addEventListener("mousedown", ev=>{ if(ev.target.closest("button")) ev.preventDefault(); });
+$("fontSel").addEventListener("change", ()=>{ const E=S.editing; if(!E) return; E.cfg.mode=$("fontSel").value;
+  if(E.cfg.mode==="auto"||E.cfg.mode==="orig"){ const inf=S.fonts.get(E.b.fontName); if(inf){ E.cfg.bold=inf.cls.bold; E.cfg.italic=inf.cls.italic; fillPanel(E.b,E.cfg,inf);} }
+  refreshAuto(); });
+for(const [id,key] of [["boldTog","bold"],["italTog","italic"]]){
+  $(id).addEventListener("click", ()=>{ const E=S.editing; if(!E) return; E.cfg[key]=!E.cfg[key];
+    $(id).setAttribute("aria-pressed",E.cfg[key]?"true":"false"); refreshAuto(); E.b.el.focus(); });
+}
+$("sizeIn").addEventListener("input", ()=>{ const E=S.editing; if(!E) return; const v=parseFloat($("sizeIn").value); if(v>1&&v<400){ E.cfg.size=v; applyLook(E.b,E.cfg);} });
+$("colorIn").addEventListener("input", ()=>{ const E=S.editing; if(!E) return; E.cfg.color=fromHex($("colorIn").value); E.colorTouched=true; applyLook(E.b,E.cfg); });
+$("doneBtn").addEventListener("click", ()=>finishEdit(true));
+$("revertBtn").addEventListener("click", ()=>{ const E=S.editing; if(!E) return; const b=E.b; S.editing=null; b.el.classList.remove("editing"); $("panel").hidden=true;
+  S.undo.push({b, prev:b.edit}); b.edit=null; restoreView(b); b.el.blur(); updateCounts(); });
+document.addEventListener("pointerdown", ev=>{
+  const E=S.editing; if(!E) return;
+  if(ev.target===E.b.el || E.b.el.contains(ev.target) || ev.target.closest("#panel")) return;
+  if(ev.target.closest(".tb")) return; // focus handler of the other block commits this one
+  finishEdit(true);
+}, true);
+document.addEventListener("keydown", ev=>{
+  if((ev.ctrlKey||ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase()==="z" && !S.editing){ ev.preventDefault(); undo(); }
+});
+$("undoBtn").addEventListener("click", undo);
+
+/* ---------- Save ---------- */
+// Checks once that pdf-lib can re-embed an original font taken from the file.
+async function origEmbeddable(info, sampleText){
+  if(info.embedOk!==undefined) return info.embedOk;
+  try{
+    const d=await PDFLib.PDFDocument.create(); d.registerFontkit(fontkit);
+    const f=await d.embedFont(info.data,{subset:false});
+    d.addPage().drawText(sampleText||"a",{font:f,size:10}); f.widthOfTextAtSize(sampleText||"a",10);
+    await d.save(); info.embedOk=true;
+  }catch(e){ console.warn("original font not embeddable", info.name, e); info.embedOk=false; }
+  return info.embedOk;
+}
+async function buildPdf(){
+  // drop original fonts that cannot be re-embedded, so preview and file stay identical
+  let dropped=false;
+  for(const b of S.blocks){
+    if(!b.edit) continue;
+    const res=await resolveFont(b,b.edit,b.edit.text);
+    for(const r of res.runs) if(r.c.kind==="orig"){
+      const info=S.fonts.get(r.c.name);
+      if(!(await origEmbeddable(info, r.text))){ info.embedBad=true; info.fk=null; dropped=true; }
+    }
+  }
+  if(dropped){
+    for(const b of S.blocks) if(b.edit) await restoreView(b);
+    toast("Часть оригинального шрифта не удалось перенести, эти буквы заменены похожим шрифтом.", 6000);
+  }
+  const {PDFDocument, rgb, degrees} = PDFLib;
+  const doc = await PDFDocument.load(S.bytes, {ignoreEncryption:true, updateMetadata:false});
+  doc.registerFontkit(fontkit);
+  const embedded = new Map();
+  const pages = doc.getPages();
+  for(const b of S.blocks){
+    if(!b.edit) continue;
+    const page = pages[b.pg.num-1];
+    const cfg=b.edit; const text=cfg.text;
+    const s=b.size, u=[Math.cos(b.angle),Math.sin(b.angle)], v=[-u[1],u[0]];
+    const pad=0.06*s;
+    const ox=b.t[4], oy=b.t[5] - (b.dy||0)/b.pg.vp.scale;
+    const bx = ox + v[0]*(b.desc*s - pad) - u[0]*pad, by = oy + v[1]*(b.desc*s - pad) - u[1]*pad;
+    const rot = degrees(b.angle*180/Math.PI);
+    page.drawRectangle({x:bx, y:by, width:b.width+2*pad, height:(b.asc-b.desc)*s+2*pad, color:rgb(...cfg.bg), borderWidth:0, rotate:rot});
+    if(!text.trim()) continue;
+    const res = await resolveFont(b,cfg,text);
+    if(res.kind==="none") throw new Error("Нет подходящего шрифта для: "+text);
+    let pen=0;
+    for(const run of res.runs){
+      const c=run.c; let font=embedded.get(c.key);
+      if(!font){
+        if(c.kind==="orig") font = await doc.embedFont(S.fonts.get(c.name).data, {subset:false});
+        else { const f=await loadFallback(c.file); font = await doc.embedFont(f.bytes,{subset:true}); }
+        embedded.set(c.key, font);
+      }
+      page.drawText(run.text,{x:ox+u[0]*pen, y:oy+u[1]*pen, size:cfg.size, font, color:rgb(...cfg.color), rotate:rot});
+      pen += font.widthOfTextAtSize(run.text, cfg.size);
+    }
+  }
+  return await doc.save();
+}
+$("saveBtn").addEventListener("click", async ()=>{
+  await finishEdit(true);
+  const btn=$("saveBtn"); btn.disabled=true; setStatus("Собираю PDF…");
+  try{
+    const out = await buildPdf();
+    const fname = S.name.replace(/\.pdf$/i,"") + (S.blocks.some(b=>b.edit)?"-изменённый":"") + ".pdf";
+    if(!downloads){
+      // обычный браузер: скачиваем через ссылку
+      const url=URL.createObjectURL(new Blob([out],{type:"application/pdf"}));
+      const a=document.createElement("a"); a.href=url; a.download=fname; document.body.append(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),10000); toast("Файл сохранён: "+fname); return;
+    }
+    try{ await downloads.save({filename:fname, data:new Blob([out],{type:"application/pdf"})}); toast("Файл сохранён: "+fname); }
+    catch(e){ if(e&&e.code==="declined") toast("Сохранение отменено."); else if(e&&e.code==="rate_limited") toast("Окно сохранения уже открыто."); else toast("Не удалось сохранить файл."); }
+  }catch(e){ console.error(e); toast("Ошибка при сборке PDF: "+(e&&e.message||e), 6000); }
+  finally{ btn.disabled=false; setStatus(""); updateCounts(); }
+});
+
+/* ---------- File input & drag-drop ---------- */
+async function openFile(file){
+  if(!file) return;
+  if(!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)){ toast("Это не PDF. Выберите файл с расширением .pdf"); return; }
+  const buf = new Uint8Array(await file.arrayBuffer());
+  openPdf(buf, file.name, false);
+}
+$("openBtn").addEventListener("click", ()=>$("fileInput").click());
+$("fileInput").addEventListener("change", ev=>{ openFile(ev.target.files[0]); ev.target.value=""; });
+let dragDepth=0;
+window.addEventListener("dragenter", ev=>{ if(ev.dataTransfer && [...ev.dataTransfer.types].includes("Files")){ dragDepth++; $("drop").hidden=false; ev.preventDefault(); } });
+window.addEventListener("dragover", ev=>{ ev.preventDefault(); });
+window.addEventListener("dragleave", ()=>{ dragDepth=Math.max(0,dragDepth-1); if(!dragDepth) $("drop").hidden=true; });
+window.addEventListener("drop", ev=>{ ev.preventDefault(); dragDepth=0; $("drop").hidden=true; const f=ev.dataTransfer&&ev.dataTransfer.files[0]; openFile(f); });
+
+/* ---------- Sample document ---------- */
+async function makeSample(){
+  const {PDFDocument, rgb} = PDFLib;
+  const doc = await PDFDocument.create(); doc.registerFontkit(fontkit);
+  const [sr, sb, sn] = await Promise.all(["LiberationSerif-Regular","LiberationSerif-Bold","LiberationSans-Regular"].map(f=>loadFallback(f).then(x=>doc.embedFont(x.bytes,{subset:true}))));
+  const p = doc.addPage([595.28, 841.89]);
+  const ink=rgb(0.1,0.12,0.16), blue=rgb(0.13,0.3,0.62), grey=rgb(0.4,0.43,0.48);
+  p.drawRectangle({x:0,y:791,width:595.28,height:50.89,color:rgb(0.93,0.95,0.98)});
+  p.drawText("ООО «Северная мануфактура»", {x:56,y:810,size:13,font:sb,color:blue});
+  p.drawText("г. Казань, ул. Баумана, 12 · ИНН 1655012345", {x:56,y:797,size:8.5,font:sn,color:grey});
+  p.drawText("АКТ № 47", {x:56,y:735,size:22,font:sb,color:ink});
+  p.drawText("о приёмке выполненных работ от 14 октября 2026 г.", {x:56,y:712,size:12,font:sr,color:ink});
+  const rows=[["Исполнитель:","ИП Соколова Мария Андреевна"],["Заказчик:","ООО «Северная мануфактура»"],["Основание:","Договор № 12/26 от 3 марта 2026 г."]];
+  let y=672; for(const [a,b2] of rows){ p.drawText(a,{x:56,y,size:11,font:sb,color:ink}); p.drawText(b2,{x:160,y,size:11,font:sr,color:ink}); y-=20; }
+  y-=14;
+  const lines=["Исполнитель выполнил, а Заказчик принял следующие работы:","1. Разработка фирменного стиля и логотипа — 45 000 руб.","2. Подготовка макетов упаковки (3 вида) — 27 500 руб.","3. Адаптация макетов для печати — 8 000 руб."];
+  for(const l of lines){ p.drawText(l,{x:56,y,size:11.5,font:sr,color:ink}); y-=19; }
+  y-=8;
+  p.drawText("Итого: 80 500 руб. (восемьдесят тысяч пятьсот рублей), без НДС.",{x:56,y,size:11.5,font:sb,color:ink}); y-=30;
+  p.drawText("Работы выполнены в полном объёме и в срок. Претензий по качеству нет.",{x:56,y,size:11.5,font:sr,color:ink}); y-=70;
+  p.drawText("Исполнитель ______________ М. А. Соколова",{x:56,y,size:11,font:sr,color:ink});
+  p.drawText("Заказчик ______________ И. П. Гарипов",{x:320,y,size:11,font:sr,color:ink});
+  p.drawText("Страница 1 из 1",{x:56,y:40,size:8.5,font:sn,color:grey});
+  return await doc.save();
+}
+
+(async ()=>{
+  try{ const bytes = await makeSample(); await openPdf(new Uint8Array(bytes), "akt-47-primer.pdf", true); }
+  catch(e){ console.error(e); $("pages").innerHTML='<div class="loading">Откройте PDF кнопкой «Открыть PDF» или перетащите файл сюда.</div>'; updateCounts(); }
+})();
+})();
+</script>
+
+</body>
+</html>
